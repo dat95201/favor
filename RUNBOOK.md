@@ -57,9 +57,19 @@ the paper's threats section.
 ## 3. Test split
 
 ```bash
+# tier 1 (default in experiment.yaml): confirmatory + mechanism factorial, full r
 .venv/bin/favor run --model configs/models/qwen25-coder-7b.yaml  --split test --workers 4
 .venv/bin/favor run --model configs/models/gpt-luna-6.yaml --split test --workers 4
+
+# tier 2 (if compute allows): uncomment the arms in experiment.yaml, or pass
+# them explicitly; same --out merges via resume
+.venv/bin/favor run --model configs/models/qwen25-coder-7b.yaml --split test \
+    --configs CR+TopK-reset,IS+VS,CR+Rand --out runs/qwen25-coder-7b-test --workers 4
 ```
+
+The arm tiers live as comments in `configs/experiment.yaml` — scoping the
+study is editing that one file. For r' < r on the ablations (Section 5.5),
+copy it, set `runs_per_bug`, and pass `--experiment` — note r' in the paper.
 
 - Tasks are (bug x configuration x r runs), interleaved in a seeded random
   order so machine drift favors no configuration (5.5).

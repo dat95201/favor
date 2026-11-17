@@ -1,5 +1,7 @@
 """Table 5: the twelve configurations. Each changes one component relative to
-a neighbor, so every RQ4 contribution is measured by a single comparison."""
+a neighbor, so every RQ4 contribution is measured by a single comparison.
+Which arms a run uses is decided in configs/experiment.yaml (tiers are
+documented there) or ad hoc with `favor run --configs`."""
 
 from __future__ import annotations
 
