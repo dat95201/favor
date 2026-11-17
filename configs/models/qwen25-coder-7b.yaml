@@ -1,0 +1,8 @@
+# Local model via Ollama (ollama pull qwen2.5-coder:7b). Ollama serves an
+# OpenAI-compatible API at /v1 and honors the seed parameter.
+name: qwen2.5-coder:7b
+base_url: http://localhost:11434/v1
+api_key_env: OLLAMA_API_KEY
+max_output_tokens: 4096
+supports_seed: true
+request_timeout_s: 600
