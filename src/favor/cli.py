@@ -39,7 +39,11 @@ def cmd_env(args) -> int:
 
         key = os.environ.get(mc.api_key_env, "")
         print(f"model           : {mc.name} @ {mc.base_url}")
-        print(f"api key ({mc.api_key_env}): {'set' if key else 'MISSING'}")
+        if mc.needs_api_key:
+            status = "set" if key else "MISSING"
+        else:
+            status = "set" if key else "not required (local endpoint)"
+        print(f"api key ({mc.api_key_env}): {status}")
     return 0
 
 

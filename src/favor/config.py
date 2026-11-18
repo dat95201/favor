@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -28,7 +29,19 @@ class ModelConfig:
 
     @property
     def api_key(self) -> str:
+        # The OpenAI client rejects an empty key, so local endpoints that ignore
+        # it entirely (Ollama) still get a non-empty placeholder.
         return os.environ.get(self.api_key_env, "") or "unset"
+
+    @property
+    def needs_api_key(self) -> bool:
+        """False for endpoints served on this machine, which authenticate
+        nobody; only then is an unset api_key_env worth reporting."""
+        return (urlparse(self.base_url).hostname or "") not in (
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        )
 
     @staticmethod
     def load(path: str | Path) -> "ModelConfig":

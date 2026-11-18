@@ -1,8 +1,8 @@
 # Cloud model through an OpenAI-compatible provider. Put the provider's
-# /v1 endpoint in base_url and the key in FAVOR_CLOUD_API_KEY (.env).
+# /v1 endpoint in base_url and the key in CLOUD_API_KEY (.env).
 name: gpt-luna-6
 base_url: https://api.openai.com/v1   # <- replace with your provider's endpoint
-api_key_env: FAVOR_CLOUD_API_KEY
+api_key_env: CLOUD_API_KEY
 max_output_tokens: 4096
 supports_seed: true
 request_timeout_s: 600
