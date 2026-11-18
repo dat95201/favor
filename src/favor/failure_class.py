@@ -20,6 +20,11 @@ class FailureSignature:
     expected: str | None = None
     actual: str | None = None
     location: str | None = None  # "File.java:123", first frame in the test class
+    # the asserting source line, resolved from `location` at validation time.
+    # ChatRepair's dynamic feedback shows it with the test name and the error;
+    # it is NOT part of key(), so it never splits an L4 class. Keep it LAST:
+    # memory.result_line_for rebuilds signatures positionally from key().
+    failing_line_src: str | None = None
 
     def key(self) -> tuple:
         return (

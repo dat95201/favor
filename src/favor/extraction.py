@@ -102,17 +102,7 @@ def _trigger_details(
     for test_id, error_line in meta:
         sig = sigs.get(test_id)
         location = sig.location if sig else None
-        failing_src = None
-        if location and test_dir:
-            test_class = test_id.split("::")[0]
-            path = workdir_buggy / test_dir / (test_class.replace(".", "/") + ".java")
-            try:
-                line_no = int(location.rsplit(":", 1)[1])
-                lines = path.read_text(errors="replace").splitlines()
-                if 0 < line_no <= len(lines):
-                    failing_src = lines[line_no - 1].strip()
-            except (OSError, ValueError, IndexError):
-                failing_src = None
+        failing_src = d4j.test_line_source(workdir_buggy, test_dir, test_id, location)
         out.append(
             TriggerTest(
                 test_id=test_id,

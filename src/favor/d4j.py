@@ -143,6 +143,27 @@ def export(workdir: Path, prop: str) -> str:
     return "\n".join(lines).strip() if code == 0 else ""
 
 
+def test_line_source(
+    workdir: Path, test_dir: str, test_id: str, location: str | None
+) -> str | None:
+    """The source line of a failing assertion, from a signature's location
+    ("ClassTest.java:42"). ChatRepair's initial prompt AND its dynamic feedback
+    include this "relevant test code" next to the test name and the error."""
+    if not (location and test_dir):
+        return None
+    try:
+        line_no = int(location.rsplit(":", 1)[1])
+        path = Path(workdir) / test_dir / (
+            test_id.split("::")[0].replace(".", "/") + ".java"
+        )
+        lines = path.read_text(errors="replace").splitlines()
+        if 0 < line_no <= len(lines):
+            return lines[line_no - 1].strip()
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 @dataclass(frozen=True)
 class CompileResult:
     ok: bool

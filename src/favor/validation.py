@@ -10,7 +10,7 @@ valid for the whole run."""
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import d4j
@@ -51,6 +51,7 @@ class Validator:
         self.proto = proto
         self.workdir = Path(workdir)
         self._original: bytes | None = None
+        self._test_dir: str | None = None
         self.test_timeout = max(
             proto.test_timeout_min_s, proto.test_timeout_factor * bug.fixed_test_time_s
         )
@@ -61,6 +62,10 @@ class Validator:
         ok = d4j.checkout(self.bug.project, self.bug.bug_id, "b", self.workdir)
         if not ok:
             raise RuntimeError(f"checkout failed for {self.bug.key}")
+        # resolved once, here rather than lazily in validate(): prepare() runs
+        # before the run's clock starts, so the export never lands inside a
+        # timed window or runs against a patched working copy
+        self._test_dir = d4j.export(self.workdir, "dir.src.tests")
         src = self.file_path.read_bytes()
         span = src[self.bug.start_byte : self.bug.end_byte].decode("utf8", "replace")
         if span.strip() != self.bug.method_src.strip():
@@ -82,6 +87,15 @@ class Validator:
         d4j.cleanup(self.workdir)
 
     # -- validation ---------------------------------------------------------------
+
+    def _with_test_line(self, sig: FailureSignature) -> FailureSignature:
+        """Attach the asserting source line, so dynamic feedback about a *new*
+        failing test carries the same three pieces as the initial prompt (test
+        name, relevant test code, error message) — ChatRepair, Section 3.2."""
+        src = d4j.test_line_source(
+            self.workdir, self._test_dir, sig.test_id, sig.location
+        )
+        return replace(sig, failing_line_src=src) if src else sig
 
     def apply(self, method_code: str) -> None:
         assert self._original is not None, "prepare() first"
@@ -121,9 +135,13 @@ class Validator:
                 return Outcome(
                     status="plausible", cls=PASS, compile_s=comp.wall_s, test_s=tr.wall_s
                 )
-            sigs = parse_failing_tests(
-                tr.failing_tests_text, stack_frames=self.proto.signature_stack_frames
-            )
+            sigs = [
+                self._with_test_line(s)
+                for s in parse_failing_tests(
+                    tr.failing_tests_text,
+                    stack_frames=self.proto.signature_stack_frames,
+                )
+            ]
             return Outcome(
                 status="fail",
                 cls=class_for_failures(sigs),

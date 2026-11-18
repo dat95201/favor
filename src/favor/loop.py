@@ -3,7 +3,9 @@
 The baseline CR is the special case with k=0 and m=1. Independent sampling
 drops the conversation and the memory: every call uses the initial prompt
 alone. A syntactic (L2) repeat skips validation but counts toward its class in
-memory; a plausible patch ends the run; a run also stops once B patches are
+memory, and is fed back with the line its twin received — what ChatRepair,
+which does not deduplicate, would have produced by re-running it; a plausible
+patch ends the run; a run also stops once B patches are
 validated, or at the max_llm_calls termination cap (repeats and unparseable
 output consume no budget, so the budget alone does not guarantee termination).
 
@@ -53,6 +55,7 @@ def run_repair(
     memory = FailureMemory(proto.diff_max_lines, proto.score_weights)
     seen_l2: dict[str, int] = {}              # L2 key -> first patch_index
     class_by_patch: dict[int, FailureClass] = {}
+    feedback_by_patch: dict[int, str] = {}    # patch_index -> its unprefixed line
     patch_records: list[PatchRecord] = []
 
     used = 0
@@ -113,7 +116,7 @@ def run_repair(
                 core = _join(init, request)
                 sent = _join(init, mem_block, request)
             else:
-                request = prompts.request_block(cfg.m, cfg.vs, bug.method_name, again=True)
+                request = prompts.request_block(cfg.m, cfg.vs, bug.method_name)
                 core = _join(pending_feedback, request)
                 sent = _join(mem_block, pending_feedback, request)
             conv.append({"role": "user", "content": core})
@@ -181,18 +184,29 @@ def run_repair(
                     class_by_patch[patch_index] = ecls  # inherits L3/L4 class (5.7)
                     if cfg.memory == "full":
                         memory.inherit(ecls, turn)
-                if cfg.m == 1:
-                    line = ("The fix is a syntactic repeat of an earlier attempt; "
-                            "it was not run. Try a different idea.")
-                else:
-                    line = prompts.repeat_line(j + 1, earlier)
+                # Skipping validation is a COST decision; the prompt must still
+                # show what ChatRepair would have shown. ChatRepair has no
+                # deduplication: it would have re-run the twin, got the same
+                # outcome and emitted the same feedback. So replay that line
+                # rather than announcing the repeat — announcing it would hand
+                # every arm (the CR baseline included) the anti-duplication
+                # signal that is the memory arms' treatment, and would blur the
+                # CR / CR+Instr control.
+                replay = feedback_by_patch.get(earlier)
+                if replay is None:   # twin never produced a line (budget edge)
+                    replay = "The fixed version is still not correct."
+                line = replay if cfg.m == 1 else prompts.feedback_line_multi(j + 1, replay)
+                named = sorted(
+                    {t for t in (ecls.failing_test_ids() if ecls else set()) if t in line}
+                )
+                feedback_by_patch[patch_index] = replay
                 feedback_lines.append(line)
                 attempts_in_conv += 1
                 log_patch(PatchRecord(**base, l1=k1, l2=k2, l2_duplicate_of=earlier,
                                       validated=False, status="repeat",
                                       l4=ecls.to_json() if ecls else None,
                                       class_hash=class_hash(ecls) if ecls else None,
-                                      feedback_line=line,
+                                      feedback_line=line, feedback_named_tests=named,
                                       budget_used_after=used))
                 call_indexes.append(patch_index)
                 patch_index += 1
@@ -221,11 +235,16 @@ def run_repair(
                 memory.observe(out.cls, bug.method_src, pp.code, turn)
 
             still_trigger = out.still_fails_trigger(trigger_ids)
-            summary = out.signatures[0].summary() if out.signatures else None
+            # multiple failing tests: report only one, to keep feedback concise
+            # (Section 3.2)
+            sig0 = out.signatures[0] if out.signatures else None
             single = prompts.feedback_single(
-                out.status, out.compile_error, still_trigger, summary
+                out.status, out.compile_error, still_trigger,
+                sig0.summary() if sig0 else None,
+                sig0.failing_line_src if sig0 else None,
             )
             line = single if cfg.m == 1 else prompts.feedback_line_multi(j + 1, single)
+            feedback_by_patch[patch_index] = single
             # origin analysis: a test is "named" only when its id appears in
             # the actual feedback text (Section 5.7; ChatRepair's "still not
             # correct" names no test, so repeats after it are unreported)

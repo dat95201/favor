@@ -40,10 +40,15 @@ def initial_prompt(
     return "\n".join(parts)
 
 
-def request_block(m: int, vs: str, method_name: str, again: bool = False) -> str:
+def request_block(m: int, vs: str, method_name: str) -> str:
     """What the model must return this turn. vs: 'none' | 'prob' | 'noprob'.
 
-    m=1 follows ChatRepair (ask for "another" fixed version after a failure).
+    The ask is turn-invariant in EVERY arm. ChatRepair re-asks for "the
+    correct" fix after every feedback (Fig. 2), and VS-Standard has no
+    turn-dependent wording either; a "previous ones were wrong, give different
+    ones" nudge in a re-ask is a diversity mechanism, and a diversity mechanism
+    must live in the arm that is supposed to be testing it (the memory block,
+    or the VS template itself) — never in the scaffolding both arms share.
     vs='prob' follows the VS-Standard template of Zhang et al. (App. G.3):
     "Generate k responses ...", a per-response probability described as "the
     estimated probability from 0.0 to 1.0 of this response given the input
@@ -56,16 +61,13 @@ def request_block(m: int, vs: str, method_name: str, again: bool = False) -> str
     vs='noprob' is the paper's Sequence baseline: the same ask without
     probabilities."""
     if vs == "none" or m == 1:
-        ask = "another" if again else "the correct, complete"
         return (
-            f"Please provide {ask} fixed version of the `{method_name}` function. "
+            f"Please provide the correct, complete fixed version of the "
+            f"`{method_name}` function. "
             "Return the entire fixed function in a single ```java code block, "
             "with no explanation outside the block."
         )
-    lines = []
-    if again:
-        lines.append("None of the previous fixes is correct.")
-    lines += [
+    lines = [
         f"Generate {m} responses to the input prompt. Each response is a "
         f"different fixed version of the buggy `{method_name}` function, as one "
         "complete function.",
@@ -137,10 +139,13 @@ def feedback_single(
     compile_error: str | None,
     still_fails_trigger: bool,
     new_failure_summary: str | None,
+    new_failure_line_src: str | None = None,
 ) -> str:
-    """ChatRepair's feedback, unchanged, for a turn that returned one patch:
-    still failing the original test only states the bug is not fixed; a
-    different failing test is named with line and error (Section 2.3)."""
+    """ChatRepair's dynamic feedback, unchanged, for a turn that returned one
+    patch: still failing the original test only states the bug is not fixed; a
+    *different* failing test gets the full three-part description — test name,
+    relevant test code, error message (Section 3.2). One line, so the m>1
+    feedback stays linear in m."""
     if outcome_kind == "compile_error":
         return (
             "The fixed version does not compile. Compilation error: "
@@ -150,21 +155,12 @@ def feedback_single(
         return "The fixed version causes the test suite to time out."
     if still_fails_trigger:
         return "The fixed version is still not correct; it fails the original failing test."
-    return (
-        "The fixed version fails a different test: "
-        f"{new_failure_summary}."
-    )
+    line = f" on this test line: `{new_failure_line_src}`" if new_failure_line_src else ""
+    return f"The fixed version fails a different test: {new_failure_summary}{line}."
 
 
 def feedback_line_multi(index: int, line: str) -> str:
     return f"[Fix {index}] {line}"
-
-
-def repeat_line(index: int, earlier_index: int) -> str:
-    return (
-        f"[Fix {index}] is a syntactic repeat of an earlier attempt "
-        f"(fix {earlier_index}); it was not run."
-    )
 
 
 def unparseable_line() -> str:

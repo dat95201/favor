@@ -49,6 +49,20 @@ def test_l2_repeats_skip_validation_but_are_logged():
         assert p["class_hash"] == orig["class_hash"]
 
 
+def test_repeat_feedback_replays_the_twins_line_and_reveals_nothing():
+    """Deduplication saves validation cost; it must not leak a duplication
+    signal into the prompt. ChatRepair would have re-run the twin and said the
+    same thing, so the baseline sees exactly that."""
+    _, patches, _, _ = run("CR")
+    repeats = [p for p in patches if p["status"] == "repeat"]
+    assert repeats
+    for p in repeats:
+        orig = next(q for q in patches if q["patch_index"] == p["l2_duplicate_of"])
+        assert p["feedback_line"] == orig["feedback_line"]
+        assert "repeat" not in p["feedback_line"].lower()
+        assert "different idea" not in p["feedback_line"].lower()
+
+
 def test_run_stops_at_first_plausible():
     rec, patches, _, _ = run("FaVoR")
     assert rec.plausible_found

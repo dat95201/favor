@@ -47,7 +47,8 @@ required".
 | Margin delta (5.8) | **0.07** (7 repair-rate points) | power-driven judgment call: at r=3, N~100-300, delta=0.03 has ~0.2-0.4 power when the arms are truly identical, ~0.9 at 0.07 (review simulation); alternatives are raising r or a run-level GLMM. Fixed before test-split runs; report as rate and bug count |
 | Runs per bug r (5.3) | **3** | compute-bound; confirmatory configs keep r if ablations must drop to r' < r |
 | Second phase of ChatRepair (4.2 CHOOSE) | **dropped** — a run stops at its first plausible patch | the endpoint is cost to first plausible |
-| Feedback granularity for m>1 (4.6 CHOOSE) | **one line per validated patch** (L2-filtered ones listed as repeats) | keeps feedback linear in m |
+| Feedback granularity for m>1 (4.6 CHOOSE) | **one line per validated patch**; an L2-filtered patch replays its twin's line | keeps feedback linear in m; see "repeats are invisible to the model" below |
+| Few-shot examples (ChatRepair 4.1) | **0-shot** | ChatRepair's headline runs are 1-shot (same-project historical fixes), but its own ablation study (5.3) is 0-shot "since it can best illustrate the effect of individual components" — which is exactly what every FaVoR arm is doing. **Dev-split consequence:** Table 4 puts 0-shot at 21.86 avg. tries vs 9.91 at 1-shot, so B=20 censors far more at 0-shot; re-fit B *and* revisit this row together |
 | Failure signature (5.6) | exception type, normalized message, expected/actual when present, assertion location with **1 stack frame** | `signature_stack_frames` |
 | L2 normalization (5.6 TBD) | comments/whitespace dropped + **consistent renaming of method-local identifiers** (params, locals, catch/for/lambda/resource names) | `l2_alpha_rename: false` turns renaming off |
 | Test timeout (5.5) | max(300 s, 5 × fixed-version relevant-test time) per validation run | `test_timeout_*` |
@@ -89,6 +90,61 @@ required".
   proposal requires a token-for-token check against the released ChatRepair
   code before freezing — do that against `prompts.py` and record deviations in
   Table 2.
+- **Nothing in the baseline may pre-empt the treatment.** FaVoR's mechanism is
+  "tell the model what it already tried"; a CR arm that leaks the same signal
+  makes H1 untestable in the conservative direction. Three places were audited
+  (2026-11-18), all in `loop.py`/`prompts.py`:
+  - *Repeats are invisible to the model.* An L2 repeat skips validation (a cost
+    decision), but its feedback is the **twin's line, replayed verbatim** —
+    what ChatRepair, which does not deduplicate, would have produced by
+    re-running it. Announcing the repeat would have given every arm, the
+    baseline included, the anti-duplication signal CR+Instr exists to isolate.
+  - *The ask is turn-invariant in every arm.* ChatRepair asks for "the
+    correct" fix after every feedback (Fig. 2) and VS-Standard has no
+    turn-dependent wording, so `request_block` lost its `again` parameter.
+    This cut a nudge on both sides: "please provide **another** fixed version"
+    in the m=1 arms, and "**None of the previous fixes is correct.**" in the
+    VS arms. Within-call diversity ("each response is a different fixed
+    version") stays — that IS the VS treatment, and it is present on turn 1.
+  - *The "do not repeat" instruction* appears only in `memory_block` and
+    `instruction_only_block` — i.e. only in the arms that are supposed to have
+    it.
+- **Blast radius of the 2026-11-18 prompt audit** (measured, not argued:
+  replay every arm against the scripted model and diff the sent messages and
+  the records — `FakeChatClient.calls` makes this a few lines):
+  - **IS and IS+VS are byte-identical.** The independent regime never builds
+    feedback, so the sampling reference is untouched.
+  - **All seven m=1 conversational arms shifted identically** (the same two
+    substitutions in CR, CR+Instr, CR-hot, CR+Mem, CR+Rand, CR+TopK,
+    CR+TopK-reset), so the mechanism contrasts keep their structure — and
+    CR vs CR+Instr becomes a real contrast for the first time.
+  - **At the frozen k/m/L the VS arms saw no prompt change at all.** With m=3
+    and L=3 attempts, a VS conversation holds exactly one call, so `again`
+    never fired and in-conversation feedback never reached them. Two
+    consequences: (a) the removed VS nudge was dead code *in this
+    configuration* and only matters for sensitivity runs with L > m, and (b)
+    **the audit moved CR but not FaVoR**, i.e. it moved the confirmatory
+    contrast. Direction is not one-sided: CR lost an unearned duplication
+    hint (widens the gap) and gained ChatRepair's relevant-test-code feedback
+    (narrows it). Disclose both in the write-up; this landed before any
+    test-split run, which is why the freeze gate exists.
+  - **No outcome field moved in any arm** — `plausible_found`,
+    first-plausible index, validated/generated counts, llm_calls, turns,
+    conversations, stopped_reason and seed are identical; only prompt token
+    counts (text length) differ. L4 classes and `class_hash` are identical
+    everywhere, confirming `failing_line_src` stays out of `key()`.
+- Dynamic feedback about a *different* failing test carries all three pieces
+  ChatRepair gives (Section 3.2): test name, **relevant test code**, error
+  message. The asserting line is resolved from the signature's location at
+  validation time (`d4j.test_line_source`, shared with extraction) and rides on
+  `FailureSignature.failing_line_src` — deliberately **outside** `key()`, so it
+  never splits an L4 class. Without it the feedback is Table 5's
+  `TestName+ErrMsg` row (59 fixes), not the `Dynamic` default (64).
+- ChatRepair's **second phase** (alternative variations of a plausible patch)
+  is dropped because a run stops at its first plausible patch, which is the
+  endpoint. Consequence for the write-up: the CR arm reproduces ChatRepair's
+  *patch-generation* loop, not its reported repair counts — do not present CR's
+  numbers as a replication of Table 1.
 - Conversation length L=3 counts **attempts** per conversation — validated
   patches plus L2 repeats — not LLM calls. With m patches per call, a call
   contributes up to m attempts, so every configuration restarts after the same
@@ -191,3 +247,7 @@ for 5.8 (bootstrap kept; revisit if δ=0.07 is contested).
    analysis.
 9. Table 5: add CR+Instr (instruction-only control).
 10. §5.5: disclose the max_llm_calls termination cap.
+11. §4.2/Table 2: state that the CR arm is 0-shot (as in ChatRepair's own
+    ablation), that L2 repeats are fed back with their twin's line, and that
+    the second phase is dropped — so CR is ChatRepair's loop, not a
+    replication of its Table 1.
