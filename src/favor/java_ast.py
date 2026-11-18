@@ -213,10 +213,28 @@ def _declared_local_names(root: Node) -> dict[str, str]:
     return mapping
 
 
+def _is_member_name(n: Node) -> bool:
+    """True when the identifier names a member, not a value: the called method
+    in `obj.get()`, the field in `obj.size`, or a method reference. Such names
+    must never be alpha-renamed even when a local variable shares their text
+    (the renaming is text-keyed, not scope-resolved)."""
+    p = n.parent
+    if p is None:
+        return False
+    if p.type == "method_invocation":
+        name = p.child_by_field_name("name")
+        return name is not None and name.start_byte == n.start_byte
+    if p.type == "field_access":
+        field = p.child_by_field_name("field")
+        return field is not None and field.start_byte == n.start_byte
+    return p.type == "method_reference"
+
+
 def l2_normalize(method_src: str, alpha_rename: bool = True) -> str:
     """The L2 syntactic form: AST-shaped serialization of the comment-free
     token stream, with local identifiers consistently renamed when
-    `alpha_rename` is on (the default normalization of Section 5.6)."""
+    `alpha_rename` is on (the default normalization of Section 5.6). Member
+    names (called methods, accessed fields) are never renamed."""
     root = _method_root(method_src)
     if root is None:
         return "RAW " + " ".join(method_src.split())
@@ -231,7 +249,7 @@ def l2_normalize(method_src: str, alpha_rename: bool = True) -> str:
             t = _text(n)
             if not t.strip():
                 return
-            if n.type == "identifier" and t in rename:
+            if n.type == "identifier" and t in rename and not _is_member_name(n):
                 t = rename[t]
             parts.append(t)
             return

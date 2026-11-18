@@ -114,11 +114,13 @@ def normalize_message(msg: str) -> str:
 
 
 def extract_expected_actual(msg: str) -> tuple[str | None, str | None]:
+    """Expected/actual values enter the L4 key, so they get the same scrubbing
+    as messages: object ids and absolute paths must not split classes."""
     for pat in _EXPECTED_ACTUAL:
         m = pat.search(msg)
         if m:
-            e = _WS.sub(" ", m.group("e")).strip()[:120]
-            a = _WS.sub(" ", m.group("a")).strip()[:120]
+            e = _WS.sub(" ", _PATH.sub("<PATH>", _HEX_ID.sub("@ID", m.group("e")))).strip()[:120]
+            a = _WS.sub(" ", _PATH.sub("<PATH>", _HEX_ID.sub("@ID", m.group("a")))).strip()[:120]
             return e, a
     return None, None
 

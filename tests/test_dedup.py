@@ -55,3 +55,27 @@ def test_parameters_are_not_renamed_inconsistently():
 def test_normalize_is_deterministic():
     assert l1_normalize(A) == l1_normalize(A)
     assert l2_normalize(A) == l2_normalize(A)
+
+
+# a local variable sharing its name with an invoked method must not drag the
+# method name into the renaming (text-keyed renaming is not scope-resolved)
+MEMBER_GET = """public int f(Holder obj) {
+    int get = obj.get();
+    return get + obj.size;
+}"""
+MEMBER_PUT = """public int f(Holder obj) {
+    int put = obj.put();
+    return put + obj.size;
+}"""
+
+
+def test_member_names_are_never_renamed():
+    assert l2_key(MEMBER_GET) != l2_key(MEMBER_PUT)
+    norm = l2_normalize(MEMBER_GET)
+    assert "get" in norm.split()   # the invoked method keeps its name
+    assert "size" in norm.split()  # the accessed field keeps its name
+
+
+def test_local_rename_still_merges_with_member_calls():
+    renamed = MEMBER_GET.replace("int get", "int got").replace("return get", "return got")
+    assert l2_key(MEMBER_GET) == l2_key(renamed)

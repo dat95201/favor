@@ -48,7 +48,7 @@ POOL = [A, A2, B, B2, C, E, FIX]
 
 def script(messages: list[dict], idx: int) -> str:
     last = messages[-1]["content"]
-    if "propose" in last:  # a Verbalized Sampling turn: m fixes with probabilities
+    if "Fix <i>:" in last:  # a VS/Sequence turn: m fixes (with probabilities)
         chunk = POOL[idx * 3 : idx * 3 + 3] or [FIX]
         parts = []
         for i, code in enumerate(chunk):
@@ -66,7 +66,7 @@ def run_smoke(out_dir: str | Path) -> int:
 
     proto = Protocol(budget_b=8, runs_per_bug=1, k=2, m=3, flaky_runs=1)
     confs = table5(proto)
-    chosen = ["IS", "IS+VS", "CR", "CR+TopK", "CR+TopK-reset", "CR+VS", "FaVoR"]
+    chosen = ["IS", "IS+VS", "CR", "CR+Instr", "CR+TopK", "CR+TopK-reset", "CR+VS", "FaVoR"]
     exp = ExperimentConfig(protocol=proto, configurations=tuple(chosen))
     bug = mock_bug()
     write_json(out / "experiment.json", {**exp.dump(), "model": "fake", "bugs": [bug.key]})
@@ -123,6 +123,17 @@ def run_smoke(out_dir: str | Path) -> int:
             with_prob = [p for p in patches if p.get("probability") is not None]
             if not with_prob:
                 failures.append(f"{name}: no verbalized probability was parsed")
+        # the model must see at most ONE memory block per request (Section 4.4:
+        # selected anew at every turn; stale blocks must not accumulate)
+        for call in llm.calls:
+            text = "\n".join(m["content"] for m in call)
+            if text.count("## Approaches already tried") > 1:
+                failures.append(f"{name}: stale memory blocks accumulate in the prompt")
+                break
+        # L counts attempts: with m=3 and L=3, a VS conversation holds one call
+        if cfg.regime == "loop" and cfg.m > 1 and rec.conversations != rec.turns:
+            failures.append(f"{name}: L is not counted in attempts "
+                            f"({rec.turns} turns, {rec.conversations} conversations)")
 
     patch_log.close()
     call_log.close()

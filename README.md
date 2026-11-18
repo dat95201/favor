@@ -101,6 +101,6 @@ A real-infrastructure check on one bug, no API:
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 60 unit tests, offline
+.venv/bin/python -m pytest          # unit tests, offline
 .venv/bin/favor smoke               # loop invariants + analysis, offline
 ```

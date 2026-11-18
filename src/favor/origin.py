@@ -89,6 +89,57 @@ def classify_run(run_patches: list[dict], has_memory: bool) -> list[dict]:
     return out
 
 
+def opportunity_events(run_patches: list[dict]) -> list[dict]:
+    """Secondary analysis: origin shares normalized by opportunity. After a
+    few restarts most prior classes are hidden, so hidden origins dominate
+    even if visibility has no effect; this instrument conditions on how many
+    distinct prior classes were visible vs hidden when each patch was
+    generated. One event per classed patch generated while at least one prior
+    class existed."""
+    occurrences: dict[str, list[int]] = {}
+    events: list[dict] = []
+    for p in sorted(run_patches, key=lambda p: p["patch_index"]):
+        ch = p.get("class_hash")
+        if not ch:
+            continue
+        if occurrences:
+            ctx = set(p.get("context_patch_indexes") or [])
+            visible = {c for c, idxs in occurrences.items() if any(i in ctx for i in idxs)}
+            hidden = set(occurrences) - visible
+            events.append(
+                {
+                    "n_visible": len(visible),
+                    "n_hidden": len(hidden),
+                    "repeat": ch in occurrences,
+                    "hit_visible": ch in visible,
+                    "hit_hidden": ch in hidden,
+                }
+            )
+        occurrences.setdefault(ch, []).append(p["patch_index"])
+    return events
+
+
+def opportunity_table(events: list[dict]) -> dict:
+    repeats = [e for e in events if e["repeat"]]
+    mixed = [e for e in repeats if e["n_visible"] and e["n_hidden"]]
+    expected = (
+        sum(e["n_visible"] / (e["n_visible"] + e["n_hidden"]) for e in repeats) / len(repeats)
+        if repeats
+        else None
+    )
+    return {
+        "events": len(events),
+        "repeats": len(repeats),
+        "repeats_on_visible": sum(1 for e in repeats if e["hit_visible"]),
+        "repeats_on_hidden": sum(1 for e in repeats if e["hit_hidden"]),
+        "observed_visible_share": round(
+            sum(1 for e in repeats if e["hit_visible"]) / len(repeats), 4
+        ) if repeats else None,
+        "opportunity_visible_share": round(expected, 4) if expected is not None else None,
+        "repeats_with_both_available": len(mixed),
+    }
+
+
 def origin_table(repeat_records: list[dict]) -> dict:
     """Counts and shares per origin (and memory split) for one configuration."""
     n = len(repeat_records)

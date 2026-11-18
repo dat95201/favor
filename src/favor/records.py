@@ -121,6 +121,7 @@ class RunRecord:
     plausible_found: bool
     first_plausible_patch_index: int | None
     plausible_code: str | None
+    stopped_reason: str               # "plausible" | "budget" | "call_cap"
     validated_count: int              # patches that consumed budget
     validated_to_first_plausible: int | None  # == validated_count on success
     generated_count: int

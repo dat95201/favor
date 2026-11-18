@@ -17,13 +17,14 @@ VALIDATED = ("plausible", "fail", "compile_error", "timeout")
 
 
 def runs_from_patches(patches: list[dict]) -> dict[tuple, list[dict]]:
-    """Group patch records by run and order them by patch_index."""
-    runs: dict[tuple, list[dict]] = defaultdict(list)
+    """Group patch records by run and order them by patch_index. A run that
+    crashed and was re-executed on resume appends its records again; the LAST
+    record per (run, patch_index) wins, so partial first executions never
+    inflate duplicate rates."""
+    runs: dict[tuple, dict[int, dict]] = defaultdict(dict)
     for p in patches:
-        runs[(p["bug"], p["config"], p["run_idx"])].append(p)
-    for key in runs:
-        runs[key].sort(key=lambda p: p["patch_index"])
-    return runs
+        runs[(p["bug"], p["config"], p["run_idx"])][p["patch_index"]] = p
+    return {key: [d[i] for i in sorted(d)] for key, d in runs.items()}
 
 
 def level_sequence(run_patches: list[dict], level: str) -> list[str]:
@@ -57,6 +58,16 @@ def duplicate_rate(keys: list[str]) -> float | None:
     if not keys:
         return None
     return 1.0 - len(set(keys)) / len(keys)
+
+
+def duplicate_rate_at(keys: list[str], n: int) -> float | None:
+    """DR_L(n) at a fixed n, defined only for runs that produced >= n patches:
+    DR grows with n by construction, so configurations are compared at equal n
+    (Section 5.7); runs stop at the first plausible patch, and a run-end mean
+    would mechanically favor arms with shorter sequences."""
+    if n <= 0 or len(keys) < n:
+        return None
+    return 1.0 - len(set(keys[:n])) / n
 
 
 def duplicate_flags(keys: list[str]) -> list[bool]:
@@ -95,30 +106,37 @@ def cost_to_first_plausible(run_record: dict, budget_b: int) -> tuple[int, bool]
 
 
 def survival_curve(run_records: list[dict], budget_b: int) -> list[float]:
-    """Fraction of runs with a plausible patch within b validated patches,
-    for b = 1..B."""
-    n = len(run_records)
-    if n == 0:
+    """Share of a bug's runs with a plausible patch within b validated
+    patches, averaged over bugs (runs of one bug are correlated, so bugs are
+    the unit, not runs), for b = 1..B."""
+    by_bug: dict[str, list[dict]] = defaultdict(list)
+    for r in run_records:
+        by_bug[r["bug"]].append(r)
+    if not by_bug:
         return [0.0] * budget_b
     out = []
     for b in range(1, budget_b + 1):
-        hit = sum(
-            1
-            for r in run_records
-            if r["plausible_found"] and r["validated_to_first_plausible"] <= b
-        )
-        out.append(hit / n)
+        shares = [
+            sum(
+                1 for r in rs
+                if r["plausible_found"] and r["validated_to_first_plausible"] <= b
+            ) / len(rs)
+            for rs in by_bug.values()
+        ]
+        out.append(sum(shares) / len(shares))
     return out
 
 
 def mean_s_curve(curves: list[list[int]], horizon: int) -> list[float]:
-    """Average S_L(n) over runs up to a common horizon; a run shorter than the
-    horizon holds its final value (its class count no longer grows)."""
-    if not curves:
-        return []
-    out = []
+    """Average S_L(n) at each n over the runs that actually reached n patches
+    (no carrying of a short run's final value: a run that stopped early at a
+    plausible patch must not be counted as producing duplicates). The curve
+    ends where no run reaches n."""
+    out: list[float] = []
     for n in range(horizon):
-        vals = [c[n] if n < len(c) else (c[-1] if c else 0) for c in curves]
+        vals = [c[n] for c in curves if len(c) > n]
+        if not vals:
+            break
         out.append(sum(vals) / len(vals))
     return out
 
@@ -126,7 +144,10 @@ def mean_s_curve(curves: list[list[int]], horizon: int) -> list[float]:
 def config_summary(
     run_records: list[dict], patches_by_run: dict[tuple, list[dict]], budget_b: int
 ) -> dict:
-    """Headline numbers for one configuration (RQ2/RQ4)."""
+    """Headline numbers for one configuration (RQ2/RQ4). Bugs are the unit of
+    aggregation everywhere (per-bug means first, then the mean over bugs).
+    Equal-n duplicate rates live in rq1_dr.csv, not here: a per-run-end DR
+    would favor arms that stop early."""
     import statistics as st
 
     by_bug: dict[str, list[dict]] = defaultdict(list)
@@ -136,17 +157,15 @@ def config_summary(
         bug: sum(1 for r in rs if r["plausible_found"]) / len(rs)
         for bug, rs in by_bug.items()
     }
-    costs = [cost_to_first_plausible(r, budget_b)[0] for r in run_records]
+    cost_per_bug = {
+        bug: st.mean(cost_to_first_plausible(r, budget_b)[0] for r in rs)
+        for bug, rs in by_bug.items()
+    }
     censored = sum(1 for r in run_records if not r["plausible_found"])
+    call_capped = sum(1 for r in run_records if r.get("stopped_reason") == "call_cap")
 
-    dr = {}
     wasted = []
-    for key, pts in patches_by_run.items():
-        for level in ("l1", "l2", "l4"):
-            seq = level_sequence(pts, level)
-            d = duplicate_rate(seq)
-            if d is not None:
-                dr.setdefault(level, []).append(d)
+    for pts in patches_by_run.values():
         w = wasted_validation(pts, "l4")
         if w is not None:
             wasted.append(w)
@@ -161,11 +180,9 @@ def config_summary(
         "bugs": len(by_bug),
         "repair_rate_plausible": round(st.mean(repair_per_bug.values()), 4) if repair_per_bug else None,
         "bugs_with_plausible": repaired_bugs,
-        "mean_cost_to_first_plausible": round(st.mean(costs), 3) if costs else None,
+        "mean_cost_to_first_plausible": round(st.mean(cost_per_bug.values()), 3) if cost_per_bug else None,
         "censored_runs": censored,
-        "dr_l1": round(st.mean(dr["l1"]), 4) if dr.get("l1") else None,
-        "dr_l2": round(st.mean(dr["l2"]), 4) if dr.get("l2") else None,
-        "dr_l4": round(st.mean(dr["l4"]), 4) if dr.get("l4") else None,
+        "call_capped_runs": call_capped,
         "wasted_validation_l4": round(st.mean(wasted), 4) if wasted else None,
         "tokens_per_repaired_bug": round(total_tokens / repaired_bugs) if repaired_bugs else None,
         "calls_per_repaired_bug": round(total_calls / repaired_bugs, 1) if repaired_bugs else None,

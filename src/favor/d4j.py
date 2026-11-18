@@ -4,8 +4,10 @@ environment (Java 11, PERL5LIB, TZ) comes from favor.paths.tool_env()."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -17,26 +19,35 @@ from . import paths as P
 # ---------------------------------------------------------------- processes
 
 def run(cmd, cwd=None, timeout=None, env=None):
-    """Run a command; return (returncode, merged output, wall_s)."""
+    """Run a command; return (returncode, merged output, wall_s). The command
+    gets its own process group and the WHOLE group is killed on timeout: Ant
+    spawns test JVMs, and killing only the direct child would leave orphan
+    JVMs running (and skew every later timing)."""
     t0 = time.perf_counter()
     try:
-        p = subprocess.run(
+        p = subprocess.Popen(
             cmd,
             cwd=cwd,
             env=env or P.tool_env(),
-            timeout=timeout,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             errors="replace",
+            start_new_session=True,
         )
-        code, out = p.returncode, p.stdout
-    except subprocess.TimeoutExpired as e:
-        code = -9
-        out = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf8", "replace")
     except FileNotFoundError as e:
-        code, out = 127, str(e)
-    return code, out, time.perf_counter() - t0
+        return 127, str(e), time.perf_counter() - t0
+    try:
+        out, _ = p.communicate(timeout=timeout)
+        code = p.returncode
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            p.kill()
+        out, _ = p.communicate()
+        code = -9
+    return code, out or "", time.perf_counter() - t0
 
 
 def d4j(args, cwd=None, timeout=1800):

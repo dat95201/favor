@@ -48,6 +48,7 @@ class LoopConfig:
     m: int               # patches requested per LLM call
     vs: str              # "none" | "prob" | "noprob"  (verbalized sampling)
     temperature: float = 1.0
+    instr_only: bool = False  # "do not repeat" instruction without any entries
 
     def __post_init__(self) -> None:
         assert self.regime in ("loop", "independent"), self.regime
@@ -66,7 +67,10 @@ class Protocol:
     see DESIGN.md for the mapping to the proposal's [TBD]/[CHOOSE] markers."""
 
     budget_b: int = 20                 # validated patches per run (Section 5.5)
-    max_conversation_length: int = 3   # L, attempts per conversation (ChatRepair)
+    max_conversation_length: int = 3   # L, ATTEMPTS per conversation (ChatRepair);
+                                       # an attempt = a validated patch or an L2 repeat
+    max_llm_calls: int = 200           # hard termination cap per run (disclosed):
+                                       # repeats/unparseable output consume no budget
     k: int = 3                         # memory entries rendered per turn (4.4)
     m: int = 3                         # patches per call under VS (4.5)
     runs_per_bug: int = 3              # r (5.3)
@@ -75,7 +79,9 @@ class Protocol:
     diff_max_lines: int = 16           # memory-entry diff truncation (4.3)
     score_weights: tuple[float, float, float] = (1.0, 1.0, 1.0)  # (freq, recency, absent)
     seed: int = 20261117               # global seed; per-run seeds derive from it
-    delta: float = 0.03                # non-inferiority margin, repair-rate points (5.8)
+    delta: float = 0.07                # non-inferiority margin, repair-rate points (5.8);
+                                       # power-driven: at r=3, N~100-300, delta=0.03 has
+                                       # ~0.2-0.4 power when arms are identical, ~0.9 at 0.07
     dev_fraction: float = 0.2          # development split share (5.2)
     flaky_runs: int = 5                # repeats in the flakiness screen (5.2)
     slow_suite_limit_s: float = 600.0  # exclude bugs whose relevant tests exceed this (5.2)
@@ -86,13 +92,14 @@ class Protocol:
     n_bootstrap: int = 10000           # paired bootstrap resamples (5.8)
     max_output_tokens: int = 4096      # generation cap (5.3)
 
-    def run_seed(self, bug_key: str, config_name: str, run_idx: int) -> int:
-        """Stable per-(bug, configuration, run) seed."""
+    def run_seed(self, bug_key: str, run_idx: int) -> int:
+        """Stable per-(bug, run) seed, shared by every configuration: common
+        random numbers across arms, so paired comparisons keep the variance
+        reduction the pairing buys (identical prompts in different arms draw
+        identical responses)."""
         import hashlib
 
-        h = hashlib.sha256(
-            f"{self.seed}|{bug_key}|{config_name}|{run_idx}".encode()
-        ).digest()
+        h = hashlib.sha256(f"{self.seed}|{bug_key}|{run_idx}".encode()).digest()
         return int.from_bytes(h[:4], "big")
 
 

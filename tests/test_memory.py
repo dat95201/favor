@@ -80,8 +80,11 @@ def test_render_format():
     for t in (1, 2, 3, 4):
         mem.observe(cls("A"), BUGGY, patch(f"A{t}"), turn=t)
     block = memory_block(mem.select("topk", 1, 5, set()))
-    assert block.startswith("Approaches already tried for this bug")
+    # Maniple-style fact section: markdown heading + fenced diff
+    assert block.startswith("## Approaches already tried for this bug")
+    assert "Do not repeat them; try a different idea." in block
     assert "[1] Tried 4 times. Example:" in block
+    assert "```diff" in block
     assert "Result: T::A fails at T.java:1, expected <1> but was <A>" in block
 
 

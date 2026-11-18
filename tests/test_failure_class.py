@@ -71,6 +71,21 @@ def test_compile_classes_by_error():
     assert c1.kind == "compile_error"
 
 
+def test_expected_actual_are_scrubbed():
+    text = """--- a.b.CTest::t
+junit.framework.AssertionFailedError: expected:<C@1f2e3d> but was:</tmp/x/file.txt>
+\tat a.b.CTest.t(CTest.java:5)
+"""
+    sig = parse_failing_tests(text)[0]
+    assert "@1f2e3d" not in (sig.expected or "")
+    assert "/tmp/x" not in (sig.actual or "")
+    # two runs differing only in object id / temp path share one L4 class
+    text2 = text.replace("@1f2e3d", "@9a8b7c").replace("/tmp/x/file.txt", "/tmp/y/file.txt")
+    assert class_for_failures(parse_failing_tests(text)) == class_for_failures(
+        parse_failing_tests(text2)
+    )
+
+
 def test_message_normalization_strips_ids_and_paths():
     text = """--- a.b.CTest::t
 java.lang.RuntimeException: object a.b.C@1f2e3d at /tmp/x/y.txt broke

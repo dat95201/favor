@@ -56,6 +56,23 @@ def test_compile_error_class_counts_feedback_as_reported():
     assert out[0]["origin"] == "in_context_reported"
 
 
+def test_opportunity_normalization():
+    from favor.origin import opportunity_events, opportunity_table
+
+    # classes x (visible via ctx) and y (hidden); third patch repeats x
+    p0 = patch(0, "x")
+    p1 = patch(1, "y", ctx=[0])
+    p2 = patch(2, "x", ctx=[0, 1])        # x visible, y visible -> hit visible
+    p3 = patch(3, "y", ctx=[])            # both hidden -> hit hidden
+    events = opportunity_events([p0, p1, p2, p3])
+    assert len(events) == 3               # p1, p2, p3 had prior classes
+    t = opportunity_table(events)
+    assert t["repeats"] == 2
+    assert t["repeats_on_visible"] == 1
+    assert t["repeats_on_hidden"] == 1
+    assert 0 < t["opportunity_visible_share"] < 1
+
+
 def test_origin_table_shares():
     recs = [
         {"origin": "in_context_reported", "memory_split": None},

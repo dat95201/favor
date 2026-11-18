@@ -8,7 +8,7 @@ and nothing else secret-free; see `.env.example`.
 
 ```bash
 .venv/bin/favor env                          # Java 11, Defects4J, model YAML
-.venv/bin/python -m pytest                   # 60 unit tests
+.venv/bin/python -m pytest                   # unit tests
 .venv/bin/favor smoke                        # Algorithm-1 invariants + analysis, offline
 .venv/bin/python scripts/integration_check.py Lang 59 --fast
                                              # one real bug: screen -> validate 3 patches
@@ -64,12 +64,17 @@ the paper's threats section.
 # tier 2 (if compute allows): uncomment the arms in experiment.yaml, or pass
 # them explicitly; same --out merges via resume
 .venv/bin/favor run --model configs/models/qwen25-coder-7b.yaml --split test \
-    --configs CR+TopK-reset,IS+VS,CR+Rand --out runs/qwen25-coder-7b-test --workers 4
+    --configs IS+VS,CR+Rand --out runs/qwen25-coder-7b-test --workers 4
 ```
 
 The arm tiers live as comments in `configs/experiment.yaml` — scoping the
-study is editing that one file. For r' < r on the ablations (Section 5.5),
+study is editing that one file (tier 1: IS, CR, CR+Instr, CR+TopK,
+CR+TopK-reset, CR+VS, FaVoR). For r' < r on the ablations (Section 5.5),
 copy it, set `runs_per_bug`, and pass `--experiment` — note r' in the paper.
+
+Timing caveat: wall-clock numbers (compile/test seconds) are interpretable
+only at `--workers 1`; parallel Ant builds contend for cores. The primary
+endpoint (validated-patch counts) is unaffected by workers.
 
 - Tasks are (bug x configuration x r runs), interleaved in a seeded random
   order so machine drift favors no configuration (5.5).
@@ -129,3 +134,8 @@ run logs.
   skipped, cached LLM calls replay.
 - Ollama: `ollama pull qwen2.5-coder:7b && ollama serve`; throughput improves with
   `OLLAMA_NUM_PARALLEL=4` when using `--workers 4`.
+- `work/` is scratch (one Defects4J checkout per worker and bug); delete it
+  freely between sweeps to reclaim disk — checkouts rebuild on demand.
+- A run that ends with `stopped_reason: call_cap` hit the LLM-call ceiling
+  (`max_llm_calls`) without spending its budget: the model kept producing
+  repeats or unparseable output. `call_capped_runs` in summary.csv counts them.

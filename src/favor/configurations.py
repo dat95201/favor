@@ -16,6 +16,9 @@ def table5(proto: Protocol) -> dict[str, LoopConfig]:
         LoopConfig("IS", "independent", "none", "none", False, 1, "none", t),
         LoopConfig("IS+VS", "independent", "none", "none", False, m, "prob", t),
         LoopConfig("CR", "loop", "none", "none", False, 1, "none", t),
+        # instruction-only control: the "do not repeat" header with no entries,
+        # separating the instruction's effect from the memory's content
+        LoopConfig("CR+Instr", "loop", "none", "none", False, 1, "none", t, instr_only=True),
         LoopConfig("CR-hot", "loop", "none", "none", False, 1, "none", proto.hot_temperature),
         LoopConfig("CR+Mem", "loop", "full", "all", True, 1, "none", t),
         LoopConfig("CR+Rand", "loop", "full", "random", True, 1, "none", t),

@@ -18,7 +18,7 @@ from .extraction import Rejection, analyze_bug
 from .records import BugRecord
 from .storage import read_json, write_json
 
-STEPS = ["single-function", "build", "fixed-fails", "flaky", "slow-suite", "error"]
+STEPS = ["single-function", "build", "fixed-fails", "slow-suite", "flaky", "error"]
 
 
 def _status_dir() -> Path:
@@ -74,9 +74,11 @@ def run_selection(
     write_outputs(proto)
 
 
-def write_outputs(proto: Protocol) -> None:
+def write_outputs(proto: Protocol, force_split: bool = False) -> None:
     """data/bugs.jsonl (kept bugs), data/selection/table4.json (step counts),
-    data/split.json (stratified dev/test, fixed seed)."""
+    data/split.json (stratified dev/test, fixed seed). An existing split is
+    preserved unless force_split: re-screening extra bugs after the split is
+    drawn must not silently move bugs between dev and test."""
     bugs: list[BugRecord] = []
     counts: Counter[str] = Counter()
     total = 0
@@ -94,16 +96,23 @@ def write_outputs(proto: Protocol) -> None:
         for b in sorted(bugs, key=lambda b: (b.project, b.bug_id)):
             fh.write(json.dumps(b.to_json(), ensure_ascii=False) + "\n")
 
-    # Table 4, as nested remaining counts (screens apply in order)
+    # Table 4, as nested remaining counts, in the order analyze_bug applies
+    # the screens: single-function (metadata+diff), build, fixed-fails,
+    # slow-suite, then the flakiness screen
     table4 = {"screened": total}
     remaining = total
-    for step in ("single-function", "build", "fixed-fails", "flaky", "slow-suite", "error"):
+    for step in ("single-function", "build", "fixed-fails", "slow-suite", "flaky", "error"):
         remaining -= counts.get(step, 0)
         table4[f"after {step} (-{counts.get(step, 0)})"] = remaining
     table4["selected"] = len(bugs)
     write_json(P.DATA / "selection" / "table4.json", table4)
 
     # stratified dev/test split (Section 5.2): per project, fixed seed
+    split_path = P.DATA / "split.json"
+    if split_path.exists() and not force_split:
+        print(f"split preserved (use `favor split --force` to redraw): {split_path}")
+        print(f"selected {len(bugs)} bugs -> {out}")
+        return
     rng = random.Random(proto.seed)
     dev: list[str] = []
     test: list[str] = []

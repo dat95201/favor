@@ -62,7 +62,7 @@ def cmd_split(args) -> int:
     from .selection import write_outputs
 
     exp = ExperimentConfig.load(args.experiment)
-    write_outputs(exp.protocol)
+    write_outputs(exp.protocol, force_split=args.force)
     return 0
 
 
@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("split", help="rewrite bugs.jsonl, table4.json, split.json")
     p.add_argument("--experiment", default=default_exp)
+    p.add_argument("--force", action="store_true",
+                   help="redraw split.json even if it exists (invalidates any frozen split)")
     p.set_defaults(fn=cmd_split)
 
     p = sub.add_parser("run", help="run configurations on bugs")

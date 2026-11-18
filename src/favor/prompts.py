@@ -42,8 +42,19 @@ def initial_prompt(
 
 def request_block(m: int, vs: str, method_name: str, again: bool = False) -> str:
     """What the model must return this turn. vs: 'none' | 'prob' | 'noprob'.
-    `again` marks turns after failed attempts (ChatRepair asks for "another"
-    fixed version)."""
+
+    m=1 follows ChatRepair (ask for "another" fixed version after a failure).
+    vs='prob' follows the VS-Standard template of Zhang et al. (App. G.3):
+    "Generate k responses ...", a per-response probability described as "the
+    estimated probability from 0.0 to 1.0 of this response given the input
+    prompt (relative to the full distribution)", the sampling line "Randomly
+    sample the responses from the full distribution.", and the closing "Give
+    ONLY ... no explanations or extra text." The JSON transport of the paper
+    is replaced by fenced ```java blocks because multi-line code inside JSON
+    strings breaks small models' escaping (documented in DESIGN.md; the
+    paper's F.4 shows VS is robust to the elicitation format).
+    vs='noprob' is the paper's Sequence baseline: the same ask without
+    probabilities."""
     if vs == "none" or m == 1:
         ask = "another" if again else "the correct, complete"
         return (
@@ -55,37 +66,46 @@ def request_block(m: int, vs: str, method_name: str, again: bool = False) -> str
     if again:
         lines.append("None of the previous fixes is correct.")
     lines += [
-        f"Instead of one fix, propose {m} different fixes of the buggy "
-        f"`{method_name}` function. Sample the fixes from the full range of "
-        "plausible fixes rather than only the most likely one; the fixes must "
-        "differ in approach, not only in wording.",
-        "Format your answer exactly as follows, for each fix i:",
+        f"Generate {m} responses to the input prompt. Each response is a "
+        f"different fixed version of the buggy `{method_name}` function, as one "
+        "complete function.",
         "",
-        "Fix i:",
+        "Return the responses in the following format, one block per response:",
+        "",
+        "Fix <i>:",
         "```java",
         "<the complete fixed function>",
         "```",
     ]
     if vs == "prob":
-        lines.insert(-3, "")
         lines += [
-            f"Probability: <the probability, between 0 and 1, that you would "
-            "produce this fix>",
+            "Probability: <the estimated probability from 0.0 to 1.0 of this "
+            "response given the input prompt (relative to the full "
+            "distribution)>",
             "",
-            "Give every fix its own code block and its own probability line.",
+            "Randomly sample the responses from the full distribution.",
+            f"Give ONLY the {m} responses in this format, with no explanations "
+            "or extra text.",
         ]
-    else:
-        lines += ["", "Give every fix its own code block."]
+    else:  # Sequence baseline (Zhang et al., Table 1)
+        lines += [
+            "",
+            f"Return exactly {m} responses. Give ONLY the responses in this "
+            "format, with no explanations or extra text.",
+        ]
     return "\n".join(lines)
 
 
-# --- memory block (Section 4.4, exact format) ----------------------------------
+# --- memory block (Section 4.4 content, rendered as a Maniple-style fact -------
+# section: a markdown heading with fenced code, following Parasaram et al.'s
+# prompt convention in which every fact is a `##` section and code-like
+# content is fenced; Fig. 1 of that paper) --------------------------------------
 
 def memory_block(entries: list[MemoryEntry]) -> str:
     if not entries:
         return ""
     lines = [
-        "Approaches already tried for this bug, and how they failed.",
+        "## Approaches already tried for this bug, and how they failed",
         "Do not repeat them; try a different idea.",
     ]
     for i, e in enumerate(entries, start=1):
@@ -93,10 +113,21 @@ def memory_block(entries: list[MemoryEntry]) -> str:
         lines += [
             "",
             f"[{i}] Tried {e.n} {times}. Example:",
+            "```diff",
             e.representative_diff if e.representative_diff else "(no textual change)",
+            "```",
             f"Result: {e.result_line}",
         ]
     return "\n".join(lines)
+
+
+def instruction_only_block() -> str:
+    """The CR+Instr control arm: the memory block's instruction without any
+    entries, separating the effect of the instruction from its content."""
+    return (
+        "Do not repeat approaches you have already tried for this bug; "
+        "try a different idea."
+    )
 
 
 # --- feedback (Section 4.6) -----------------------------------------------------

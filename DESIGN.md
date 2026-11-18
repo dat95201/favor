@@ -1,11 +1,17 @@
 # DESIGN — proposal-to-code map
 
 The authoritative text is the proposal (*FaVoR — Abstract & Introduction,
-revised framing*, 2026-11-16). This file maps each section onto the code and
-records every decision the proposal leaves `[TBD]`/`[CHOOSE]`, with the default
-this harness implements. **All of these are development-split choices**: run
-the dev split, revisit them, then freeze `configs/experiment.yaml` (commit the
-hash) before the first test-split run (Section 5.10).
+revised framing*, 2026-11-16), committed at `docs/proposal-2026-11-16.pdf`.
+This file maps each section onto the code and records every decision the
+proposal leaves `[TBD]`/`[CHOOSE]`, with the default this harness implements.
+**All of these are development-split choices**: run the dev split, revisit
+them, then freeze `configs/experiment.yaml` (commit the hash) before the first
+test-split run (Section 5.10).
+
+The 2026-11-18 external review's blockers and their resolutions are in the
+"Review fixes" section at the end; the items that require amending the
+proposal text (not just the code) are listed under "Proposal amendments
+required".
 
 ## Section -> module
 
@@ -38,7 +44,7 @@ hash) before the first test-split run (Section 5.10).
 | Scoring function (4.4) | z-scored log-frequency + recency + absence, weights (1,1,1), ties by earlier t_first | `score_weights` in experiment.yaml; ablate by zeroing a weight |
 | k, m (5.10) | k=3, m=3 (from {1,3,5} × {3,5}) | pick on dev by FaVoR's cost to first plausible |
 | Budget B (5.10 CHOOSE) | **B=20** validated patches | re-fit on dev: smallest B where CR reaches 90% of its plausible repairs |
-| Margin delta (5.8) | **0.03** (3 repair-rate points) | judgment call, fixed before test-split runs; report as rate and bug count |
+| Margin delta (5.8) | **0.07** (7 repair-rate points) | power-driven judgment call: at r=3, N~100-300, delta=0.03 has ~0.2-0.4 power when the arms are truly identical, ~0.9 at 0.07 (review simulation); alternatives are raising r or a run-level GLMM. Fixed before test-split runs; report as rate and bug count |
 | Runs per bug r (5.3) | **3** | compute-bound; confirmatory configs keep r if ablations must drop to r' < r |
 | Second phase of ChatRepair (4.2 CHOOSE) | **dropped** — a run stops at its first plausible patch | the endpoint is cost to first plausible |
 | Feedback granularity for m>1 (4.6 CHOOSE) | **one line per validated patch** (L2-filtered ones listed as repeats) | keeps feedback linear in m |
@@ -54,6 +60,27 @@ hash) before the first test-split run (Section 5.10).
 | Cost comparison (5.7 TBD) | mean validated-patch count to first plausible, censored at B, paired bootstrap CI; survival curve reported alongside | `analyze.py` rq2/rq4 |
 | Memorization check (5.2 CHOOSE) | **not run by default**; GitBug-Java sweep possible later — the selection pipeline only needs a Defects4J-style CLI | discuss as a threat regardless |
 
+## Prompt provenance (adjusted 2026-11-18 to the two cited instruments)
+
+- **Initial prompt I and single-patch feedback**: ChatRepair-shaped (the
+  proposal's fidelity requirement, Table 2); the token-for-token check against
+  the released ChatRepair code is still owed before freezing.
+- **VS request** (`prompts.request_block`, m>1 with probabilities): the
+  **VS-Standard** template of Zhang et al., App. G.3 — "Generate {m}
+  responses ...", per-response "estimated probability from 0.0 to 1.0 ...
+  (relative to the full distribution)", the sampling line "Randomly sample the
+  responses from the full distribution.", and "Give ONLY ... no explanations
+  or extra text." One documented transport change: the paper returns JSON;
+  multi-line Java inside JSON strings breaks small models' escaping, so fixes
+  travel in fenced ```java blocks with a `Probability:` line (the paper's F.4
+  shows VS is robust to the elicitation format).
+- **CR+VS-noProb** instantiates the paper's **Sequence** baseline (same ask,
+  no probabilities), which is exactly the RQ4 contrast the arm exists for.
+- **Memory block** (`prompts.memory_block`): content exactly as Section 4.4,
+  rendered as a **Maniple-style fact section** (Parasaram et al., Fig. 1):
+  a `##` markdown heading and the representative diff in a fenced ```diff
+  block. Facts are sections with fenced code in that instrument.
+
 ## Faithfulness notes (the proposal's [verify] items)
 
 - The initial prompt and the single-patch feedback follow the released
@@ -62,9 +89,23 @@ hash) before the first test-split run (Section 5.10).
   proposal requires a token-for-token check against the released ChatRepair
   code before freezing — do that against `prompts.py` and record deviations in
   Table 2.
-- Conversation length L=3 counts *attempts per conversation* (assistant
-  turns), after which the loop restarts from the initial prompt. Restarts
-  clear the conversation, never the memory (except `CR+TopK-reset`).
+- Conversation length L=3 counts **attempts** per conversation — validated
+  patches plus L2 repeats — not LLM calls. With m patches per call, a call
+  contributes up to m attempts, so every configuration restarts after the same
+  number of attempts; counting calls would let the VS arms restart 1/m as
+  often and confound H1. Consequence at m=3, L=3: a VS conversation holds one
+  call, so in-conversation feedback only exists for m=1 arms; cross-restart
+  information flows through the memory alone. Restarts clear the conversation,
+  never the memory (except `CR+TopK-reset`).
+- The memory block is rendered ONLY into the latest user message; earlier user
+  messages are stored without theirs. The model always sees one current
+  snapshot of M (at most k entries) — never an accumulation of stale
+  snapshots, which would reproduce the too-many-facts failure top-k exists to
+  avoid. (The stored conversation therefore differs from the sent one in
+  exactly this: past memory blocks are dropped.)
+- A patch generated earlier in the same call counts as in-context for origin
+  analysis: the model saw it in its own output. Its feedback was not yet
+  shown, so a same-call repeat is at most "in context, unreported".
 - "Fail-fast" cost (2.2) is *derived* from recorded timing. The local
   validator records phase-level compile and test wall time; per-test times are
   not emitted by `defects4j test`. The derived fail-fast estimate therefore
@@ -77,13 +118,76 @@ hash) before the first test-split run (Section 5.10).
 - For origin analysis, "reported" for compile-error/timeout classes means the
   earlier patch's feedback line was present in context (the line itself
   describes the class); for test classes it means a failing test of the class
-  is named in that feedback (checked against the actual text).
+  is **named in the actual feedback text** (`feedback_named_tests` is computed
+  by substring check against the line). ChatRepair's "still not correct"
+  names no test, so repeats after it count as unreported — the conservative
+  reading for H1.
 
 ## Departures from the proposal's environment section
 
 - **No containers.** Validation runs locally through the Defects4J CLI (the
   user's call); one checkout per (worker, bug), original file restored after
-  every candidate. Same-machine interleaving of configurations (seeded
-  shuffle) still holds (5.5).
+  every candidate; commands run in their own process group and the whole
+  group is killed on timeout, so no orphan test JVM outlives its run.
+  Residual threat vs the container design: build artifacts persist within a
+  (worker, bug) checkout across patches of the same sweep. Report in Threats.
 - Per-test timing (full vs fail-fast protocols) is approximated as described
-  above.
+  above; until the optional per-class timing pass exists, the paper should
+  claim the **full protocol only**.
+- Wall-clock timing is only interpretable at `--workers 1` (parallel builds
+  contend for cores); the validated-patch-count endpoint is unaffected.
+- Infrastructure failures inside validation (broken checkout, d4j crash) are
+  not yet distinguished from patch-caused compile errors (no `harness_error`
+  status); known limitation, watch the compile-error classes on the dev split.
+
+## Review fixes (2026-11-18)
+
+Resolutions of the external review, all verified by tests:
+
+| # | Finding | Resolution |
+|---|---|---|
+| A1 | L counted in LLM calls: VS arms restarted 1/m as often | L now counts attempts (`loop.py`, `attempts_in_conv`); smoke asserts conversations == turns for m=3 |
+| A2 | Stale memory blocks accumulated across turns | one current block, injected only into the latest user message; test + smoke assert ≤ 1 block per request |
+| A3 | DR at run-end n; mean S-curve carried short runs | `duplicate_rate_at` at fixed n over runs reaching n (`rq1_dr.csv`); `mean_s_curve` averages only live runs; summary DR columns removed |
+| A4 | `named` unioned trigger tests; same-call repeats read as lost-at-restart | named = text-checked only; same-call earlier patches are in `context_patch_indexes` |
+| A5 | Resume re-appended patch records, deflating DR | last record per (run, patch_index) wins in `runs_from_patches`; runs deduped the same way in analyze |
+| — | L2 alpha-rename rewrote member names (`obj.get()` ≡ `obj.put()`) | member names (invocation name, field access, method refs) never renamed; tests pin both directions |
+| — | Raw expected/actual leaked JVM ids/paths into L4 | scrubbed with the message normalizers |
+| — | No termination guarantee (repeats/unparseable cost nothing) | `max_llm_calls` cap (200), `stopped_reason` recorded, `call_capped_runs` in summary |
+| B1 | δ=0.03 underpowered at r=3 | δ=0.07 (see defaults table) |
+| B5 | Memorization check open | proxy in summary: share of plausible patches whose L2 equals the developer fix's (`plausible_matches_dev_fix`) |
+| C1 | No instruction-only control | new arm `CR+Instr` (tier 1): the "do not repeat" instruction with no entries |
+| C2 | Origins lack an opportunity denominator | `rq1_opportunity.csv`: repeat hits on visible vs hidden classes, normalized by availability |
+| C3 | absent(e) z-scores to 0 when all entries tie | kept as specified (4.4): when every entry is absent the term has nothing to discriminate and freq/recency break ties; a constant term would change no ranking |
+| D | Factorial not analyzed; decisions on every arm; run-level survival; cost averaged over runs | `rq4_factorial.csv` (memory x VS main effects + interaction, paired bootstrap); non-inferior/superior emitted only for FaVoR vs CR; survival and costs aggregate per bug first |
+| D | No common random numbers | run seed = f(global seed, bug, run) — shared across arms |
+| D | labels keyed by l2 only; alpha mismatch; split redrawn; Table-4 order; orphan JVMs | labels keyed (bug, l2); alpha read from the run's protocol; split preserved unless `favor split --force`; Table-4 order matches `analyze_bug`; process-group kill |
+| E | Top-k cutoff regression discontinuity | not implemented; the per-turn `memory_classes_all` / `memory_classes_selected` logs contain everything needed — planned exploratory analysis; check |M| > k frequency on the dev split first |
+
+Declined/deferred: B2 (L3/T_gen stays a stub — amend the text, below), B3
+(fail-fast timing pass not built — claim full protocol only), GLMM alternative
+for 5.8 (bootstrap kept; revisit if δ=0.07 is contested).
+
+## Proposal amendments required (text, not code)
+
+1. §4.7 Algorithm 1 line 17 and Table 2: define L in **attempts**; the Table-2
+   row "Maximum conversation length 3 / 3 / As in [5]" must note the
+   attempt-based definition (and its consequence for m>1).
+2. §4.4: state that the selected entries replace the previous turn's block
+   (one snapshot per prompt), and add the final rendering (fenced diff) to the
+   appendix.
+3. §4.5 / Appendix: fix the VS variant name (**VS-Standard**) and include the
+   exact adapted prompt with the JSON→fenced-block transport note.
+4. §5.5: replace "fresh container per patch" with the local protocol +
+   process-group isolation; move state-leakage to Threats.
+5. §5.6/5.7: either implement T_gen or demote L3/W_L3 to "reported when
+   available" and drop T_gen from §5.9's labeling evidence.
+6. §2.2/5.5: claim the full validation protocol only (fail-fast derivation
+   needs the per-class timing pass).
+7. §5.8: δ=0.07 with the power rationale; state r=3 and the planned
+   run-level sensitivity analysis.
+8. §5.7: add the same-call in-context rule and the text-checked definition of
+   "reported"; add the opportunity-normalized origin shares as a secondary
+   analysis.
+9. Table 5: add CR+Instr (instruction-only control).
+10. §5.5: disclose the max_llm_calls termination cap.

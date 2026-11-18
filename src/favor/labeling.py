@@ -15,14 +15,25 @@ from .stats import cohens_kappa
 from .storage import JsonlWriter, read_jsonl
 
 
-def _distinct_plausible(runs_dir: Path) -> list[dict]:
+def _l2_alpha(runs_dir: Path) -> bool:
+    """The L2 normalization must match the run's protocol, or labels would key
+    to classes the loop never produced."""
+    from .storage import read_json
+
+    exp = runs_dir / "experiment.json"
+    if exp.exists():
+        return read_json(exp).get("protocol", {}).get("l2_alpha_rename", True)
+    return True
+
+
+def _distinct_plausible(runs_dir: Path, alpha: bool) -> list[dict]:
     """One entry per (bug, L2 class) over all plausible patches, config-blind."""
     seen: dict[tuple, dict] = {}
     for r in read_jsonl(runs_dir / "runs.jsonl"):
         code = r.get("plausible_code")
         if not (r["plausible_found"] and code):
             continue
-        key = (r["bug"], l2_key(code))
+        key = (r["bug"], l2_key(code, alpha))
         if key not in seen:
             seen[key] = {"bug": r["bug"], "l2": key[1], "code": code}
     return sorted(seen.values(), key=lambda d: (d["bug"], d["l2"]))
@@ -31,13 +42,14 @@ def _distinct_plausible(runs_dir: Path) -> list[dict]:
 def label_cli(runs_dir: str, labeler: str, labels_path: str) -> int:
     runs_dir = Path(runs_dir)
     labels_path = Path(labels_path)
+    alpha = _l2_alpha(runs_dir)
     bugs = {b.key: b for b in load_bugs()}
     done = {
         (r["bug"], r["l2"])
         for r in read_jsonl(labels_path)
         if r.get("labeler") == labeler
     }
-    todo = [d for d in _distinct_plausible(runs_dir) if (d["bug"], d["l2"]) not in done]
+    todo = [d for d in _distinct_plausible(runs_dir, alpha) if (d["bug"], d["l2"]) not in done]
     if not todo:
         print("nothing to label for this labeler")
         _report_kappa(labels_path)
