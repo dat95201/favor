@@ -1,7 +1,0 @@
-# Suggested cloud alternative: strong on code, cheap, OpenAI-compatible API.
-name: deepseek-chat
-base_url: https://api.deepseek.com/v1
-api_key_env: FAVOR_CLOUD_API_KEY
-max_output_tokens: 4096
-supports_seed: false
-request_timeout_s: 600

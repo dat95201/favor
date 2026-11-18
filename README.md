@@ -32,10 +32,6 @@ cp .env.example .env         # then put the API key(s) in .env
 .venv/bin/favor smoke        # offline end-to-end check: no API, no Defects4J
 ```
 
-Already have a Defects4J 3.x checkout? Point `D4J_HOME` at it in `.env` and
-skip the clone (this working copy reuses the one in
-`../master-thesis/benchmarks/defects4j`).
-
 ## Models
 
 Any OpenAI-compatible endpoint works; a model is one YAML in `configs/models/`:
@@ -44,7 +40,6 @@ Any OpenAI-compatible endpoint works; a model is one YAML in `configs/models/`:
 |---|---|---|
 | `qwen25-coder-7b.yaml` | qwen2.5-coder:7b | local, Ollama |
 | `gpt-luna-6.yaml` | gpt-luna-6 | cloud, OpenAI-compatible provider |
-| `deepseek-chat.yaml` | deepseek-chat (suggested alternative) | cloud |
 
 Every request, response, token count and latency is logged (`llm.jsonl`), and
 responses are cached under `cache/` keyed by (model, messages, temperature,
