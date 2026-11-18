@@ -86,7 +86,17 @@ def cmd_run(args) -> int:
         print("no bugs selected; run `favor select-bugs` first", file=sys.stderr)
         return 1
     out = args.out or (P.RUNS / f"{Path(args.model).stem}-{args.split or 'custom'}")
-    run_experiment(exp, model, bugs, out, workers=args.workers, resume=not args.no_resume)
+    from .runner import CHECKOUT_CACHE
+
+    run_experiment(
+        exp, model, bugs, out,
+        workers=args.workers,
+        resume=not args.no_resume,
+        keep_work=args.keep_work,
+        checkout_cache=(
+            CHECKOUT_CACHE if args.checkout_cache is None else args.checkout_cache
+        ),
+    )
     return 0
 
 
@@ -141,8 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bugs", help="comma-separated bug keys (e.g. Lang-59,Cli-12)")
     p.add_argument("--configs", help="comma-separated Table-5 names (default: experiment.yaml)")
     p.add_argument("--out", help="run directory (default: runs/<model>-<split>)")
-    p.add_argument("--workers", type=int, default=1)
+    p.add_argument("--workers", type=int, default=1,
+                   help="parallel tasks; wall-clock timings are only "
+                        "interpretable at 1 (DESIGN.md)")
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--keep-work", action="store_true",
+                   help="do not delete Defects4J checkouts when the sweep ends")
+    p.add_argument("--checkout-cache", type=int, default=None,
+                   help="checkouts kept per worker before the oldest is evicted "
+                        "(default: runner.CHECKOUT_CACHE)")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("analyze", help="RQ1-RQ4 tables and figures")

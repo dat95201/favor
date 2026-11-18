@@ -82,7 +82,15 @@ endpoint (validated-patch counts) is unaffected by workers.
   (the LLM cache still replays identical requests for free).
 - `--workers N` runs N threads, each with its own checkout per bug under
   `work/runs/`. Compilation is the bottleneck; 4 workers is a good default on
-  an 8-core machine.
+  an 8-core machine. Worker ids come from a counter, so two workers can never
+  be handed the same working copy.
+- Each worker keeps the last `--checkout-cache` bugs (default 4) checked out
+  and prepared, evicting the oldest; a cache hit skips both the checkout probe
+  and the `defects4j export` that `prepare()` would otherwise re-run per task.
+  Live disk is bounded at `workers x checkout-cache` checkouts.
+- A sweep that finishes normally deletes the checkouts it made; `--keep-work`
+  keeps them. An interrupted sweep always keeps them, so resume does not
+  re-pay `defects4j checkout` for every live bug.
 - Compute ceiling: |configurations| x r x N x B validations worst case; the
   mean is far lower because runs stop at the first plausible patch.
 - If compute binds (5.5): keep r for CR, FaVoR, IS; drop ablations to r' < r —
@@ -134,8 +142,9 @@ run logs.
   skipped, cached LLM calls replay.
 - Ollama: `ollama pull qwen2.5-coder:7b && ollama serve`; throughput improves with
   `OLLAMA_NUM_PARALLEL=4` when using `--workers 4`.
-- `work/` is scratch (one Defects4J checkout per worker and bug); delete it
-  freely between sweeps to reclaim disk — checkouts rebuild on demand.
+- `work/` is scratch (Defects4J checkouts, bounded per worker by
+  `--checkout-cache`); a completed sweep clears its own, and you can delete the
+  rest freely between sweeps — checkouts rebuild on demand.
 - A run that ends with `stopped_reason: call_cap` hit the LLM-call ceiling
   (`max_llm_calls`) without spending its budget: the model kept producing
   repeats or unparseable output. `call_capped_runs` in summary.csv counts them.

@@ -182,9 +182,14 @@ required".
 ## Departures from the proposal's environment section
 
 - **No containers.** Validation runs locally through the Defects4J CLI (the
-  user's call); one checkout per (worker, bug), original file restored after
-  every candidate; commands run in their own process group and the whole
-  group is killed on timeout, so no orphan test JVM outlives its run.
+  user's call); one checkout per (worker, bug) — held in a bounded per-worker
+  LRU (`--checkout-cache`, default 4) and released on eviction and at sweep
+  end — original file restored after every candidate; commands run in their
+  own process group and the whole group is killed on timeout, so no orphan
+  test JVM outlives its run. Worker ids are drawn from a counter: the previous
+  `threading.get_ident() % 10000` could collide between two live pool threads
+  and hand both the same working copy, where one task's `restore()` races the
+  other's `compile` and can silently produce a wrong verdict.
   Residual threat vs the container design: build artifacts persist within a
   (worker, bug) checkout across patches of the same sweep. Report in Threats.
 - Per-test timing (full vs fail-fast protocols) is approximated as described
@@ -192,6 +197,11 @@ required".
   claim the **full protocol only**.
 - Wall-clock timing is only interpretable at `--workers 1` (parallel builds
   contend for cores); the validated-patch-count endpoint is unaffected.
+  **These are separable, and should be separated:** run the sweep at high
+  `--workers` for throughput, and source the cost figures from a smaller
+  timing-only pass at `--workers 1`. Defaulting the whole sweep to one worker
+  spends compute to protect a secondary measure, and compute is what forces
+  r=3 and the widened delta=0.07 above.
 - Infrastructure failures inside validation (broken checkout, d4j crash) are
   not yet distinguished from patch-caused compile errors (no `harness_error`
   status); known limitation, watch the compile-error classes on the dev split.
